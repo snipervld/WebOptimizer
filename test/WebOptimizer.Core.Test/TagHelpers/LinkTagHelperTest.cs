@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Html;
@@ -12,6 +13,7 @@ using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Primitives;
 using Moq;
+using WebOptimizer.Core.Test.Mocks;
 using WebOptimizer.Taghelpers;
 using Xunit;
 
@@ -178,17 +180,35 @@ namespace WebOptimizer.Core.Test.TagHelpers
         [InlineData("", "/myapp")]
         public void CdnUrl_RouteIsAsset_TagHelperBundlingDisabled_Success(string cdnUrl, string pathBase)
         {
-            var fileInfo = new Mock<IFileInfo>();
-            fileInfo.SetupGet(fi => fi.Exists).Returns(true);
-            var fileProvider = new Mock<IFileProvider>();
-            fileProvider.Setup(fp => fp.GetFileInfo(It.IsAny<string>())).Returns(fileInfo.Object);
+            var root =
+                MockFileInfo.CreateDirectory("", new DateTime(2017, 1, 1),
+                [
+                    new MockFileInfo("file1.css", new DateTime(2017, 1, 1), Encoding.UTF8.GetBytes("body { background-color: red; }")),
+                    new MockFileInfo("file2.css", new DateTime(2017, 1, 1), Encoding.UTF8.GetBytes("body { background-color: blue; }")),
+                    MockFileInfo.CreateDirectory("sub", new DateTime(2017, 1, 1),
+                    [
+                        new MockFileInfo("file3.css", new DateTime(2017, 1, 1), Encoding.UTF8.GetBytes("body { background-color: green; }")),
+                    ]),
+                ]);
+            var fileProvider = MockFileProvider.Create(root);
+
             var env = new Mock<IWebHostEnvironment>();
-            env.Setup(e => e.WebRootFileProvider).Returns(fileProvider.Object);
+            env.Setup(e => e.WebRootFileProvider).Returns(fileProvider);
             var cache = new Mock<IMemoryCache>();
+            cache.Setup(c => c.CreateEntry(It.IsAny<object>()))
+                .Returns((object key) =>
+                {
+                    var cacheEntry = new Mock<ICacheEntry>();
+                    cacheEntry.Setup(ce => ce.ExpirationTokens).Returns([]);
+
+                    return cacheEntry.Object;
+                });
             object cacheValue = "/file1.css?v=abc123";
             cache.Setup(c => c.TryGetValue("file1.css", out cacheValue)).Returns(true);
             object cacheValue2 = "/file2.css?v=def456";
             cache.Setup(c => c.TryGetValue("file2.css", out cacheValue2)).Returns(true);
+            object cacheValue3 = "/sub/file3.css?v=ghi789";
+            cache.Setup(c => c.TryGetValue("sub/file3.css", out cacheValue3)).Returns(true);
             var context = new Mock<HttpContext>().SetupAllProperties();
             StringValues ae = "gzip, deflate";
 
@@ -200,6 +220,7 @@ namespace WebOptimizer.Core.Test.TagHelpers
             context.Setup(c => c.RequestServices.GetService(typeof(IMemoryCache)))
                 .Returns(cache.Object);
             context.SetupGet(c => c.Request.PathBase).Returns(pathBase);
+            context.SetupGet(c => c.Items).Returns(new Dictionary<object, object>());
 
             var options = new WebOptimizerOptions
             {
@@ -219,9 +240,9 @@ namespace WebOptimizer.Core.Test.TagHelpers
             var asset = new Mock<IAsset>().SetupAllProperties();
             asset.SetupGet(a => a.ContentType).Returns("text/css");
             asset.SetupGet(a => a.Route).Returns(route);
-            asset.SetupGet(a => a.SourceFiles).Returns(new List<string>(["file1.css", "file2.css"]));
+            asset.SetupGet(a => a.SourceFiles).Returns(new List<string>(["file1.css", "file2.css", "sub/file3.css"]));
             asset.SetupGet(a => a.ExcludeFiles).Returns([]);
-            asset.SetupGet(a => a.Items).Returns(new Dictionary<string, object> { { "fileprovider", fileProvider.Object } });
+            asset.SetupGet(a => a.Items).Returns(new Dictionary<string, object> { { "fileprovider", fileProvider } });
             var assetObject = asset.Object;
             var assetPipeline = new Mock<IAssetPipeline>();
             assetPipeline.Setup(ap => ap.TryGetAssetFromRoute(route, out assetObject)).Returns(true);
@@ -245,9 +266,10 @@ namespace WebOptimizer.Core.Test.TagHelpers
                 () => new DefaultTagHelperContent()));
             linkTagHelper.Process(tagHelperContext.Object, tagHelperOutput);
             string[] linkTags = tagHelperOutput.PostElement.GetContent().Split("\r\n", StringSplitOptions.RemoveEmptyEntries);
-            Assert.Equal(2, linkTags.Length);
+            Assert.Equal(3, linkTags.Length);
             Assert.Contains($"href=\"{options.CdnUrl}{pathBase}{cacheValue}\"", linkTags[0]);
             Assert.Contains($"href=\"{options.CdnUrl}{pathBase}{cacheValue2}\"", linkTags[1]);
+            Assert.Contains($"href=\"{options.CdnUrl}{pathBase}{cacheValue3}\"", linkTags[2]);
         }
 
         [Theory2]

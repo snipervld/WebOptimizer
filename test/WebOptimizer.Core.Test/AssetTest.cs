@@ -1,12 +1,16 @@
-﻿using System.IO;
-using System.Linq;
+﻿using System;
+using System.IO;
+using System.Text;
+using System.Threading.Tasks;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Primitives;
 using Moq;
+using WebOptimizer.Core.Test.Mocks;
 using Xunit;
 
 namespace WebOptimizer.Test
@@ -93,6 +97,114 @@ namespace WebOptimizer.Test
             var asset = new Asset("/route", "content/type", [], logger.Object);
 
             Assert.Equal(asset.Route, asset.ToString());
+        }
+
+        /// <summary>
+        /// Tests that asset's <see cref="Asset.ExecuteAsync"/> correctly reads all files,
+        /// including those in nested directories, when using a glob pattern.
+        ///
+        /// Also, tests <see cref="GlobbingUrlBuilder"/> from <see cref="Asset.ExpandGlobs"/> and checks
+        /// if it works nicely with nested directories.
+        /// </summary>
+        [Fact2]
+        public async Task ExecuteAsync_GlobMatchesNestedDirectories_ReadsAllFiles()
+        {
+            var date = new DateTime(2017, 1, 1);
+            var root =
+                MockFileInfo.CreateDirectory("", date,
+                [
+                    new MockFileInfo("file1.css", date, Encoding.UTF8.GetBytes("body { background-color: red; }")),
+                    new MockFileInfo("file2.css", date, Encoding.UTF8.GetBytes("body { background-color: blue; }")),
+                    MockFileInfo.CreateDirectory("sub", date,
+                    [
+                        new MockFileInfo("file3.css", date, Encoding.UTF8.GetBytes("body { background-color: green; }")),
+                    ]),
+                ]);
+            var fileProvider = MockFileProvider.Create(root);
+
+            var logger = new Mock<ILogger<Asset>>();
+            var asset = new Asset("/all.css", "text/css", ["**/*.css"], logger.Object);
+            asset.Concatenate();
+
+            var env = new Mock<IWebHostEnvironment>();
+            env.Setup(e => e.WebRootFileProvider)
+                .Returns(fileProvider);
+
+            var cache = new MemoryCache(new MemoryCacheOptions());
+
+            var context = new Mock<HttpContext>();
+            context.SetupAllProperties();
+            context.Setup(c => c.RequestServices.GetService(typeof(IWebHostEnvironment)))
+                .Returns(env.Object);
+            context.Setup(c => c.RequestServices.GetService(typeof(IMemoryCache)))
+                .Returns(cache);
+            context.Setup(c => c.Response.Headers)
+                .Returns(new HeaderDictionary());
+
+            var options = new WebOptimizerOptions();
+
+            byte[] result = await asset.ExecuteAsync(context.Object, options);
+            string content = Encoding.UTF8.GetString(result);
+
+            Assert.Contains("background-color: red", content);
+            Assert.Contains("background-color: blue", content);
+            Assert.Contains("background-color: green", content);
+        }
+
+        /// <summary>
+        /// Same scenario as <see cref="ExecuteAsync_GlobMatchesNestedDirectories_ReadsAllFiles"/> but
+        /// backed by a real <see cref="PhysicalFileProvider"/> over a temporary directory tree
+        /// instead of a mocked file provider.
+        /// </summary>
+        [Fact2]
+        public async Task ExecuteAsync_GlobMatchesNestedDirectories_PhysicalFileProvider_ReadsAllFiles()
+        {
+            string root = Path.Combine(Path.GetTempPath(), "WebOptimizerTest_" + Guid.NewGuid().ToString("N"));
+
+            try
+            {
+                Directory.CreateDirectory(Path.Combine(root, "sub"));
+                File.WriteAllText(Path.Combine(root, "file1.css"), "body { background-color: red; }");
+                File.WriteAllText(Path.Combine(root, "file2.css"), "body { background-color: blue; }");
+                File.WriteAllText(Path.Combine(root, "sub", "file3.css"), "body { background-color: green; }");
+
+                var fileProvider = new PhysicalFileProvider(root);
+
+                var logger = new Mock<ILogger<Asset>>();
+                var asset = new Asset("/all.css", "text/css", ["**/*.css"], logger.Object);
+                asset.Concatenate();
+
+                var env = new Mock<IWebHostEnvironment>();
+                env.Setup(e => e.WebRootFileProvider)
+                    .Returns(fileProvider);
+
+                var cache = new MemoryCache(new MemoryCacheOptions());
+
+                var context = new Mock<HttpContext>();
+                context.SetupAllProperties();
+                context.Setup(c => c.RequestServices.GetService(typeof(IWebHostEnvironment)))
+                    .Returns(env.Object);
+                context.Setup(c => c.RequestServices.GetService(typeof(IMemoryCache)))
+                    .Returns(cache);
+                context.Setup(c => c.Response.Headers)
+                    .Returns(new HeaderDictionary());
+
+                var options = new WebOptimizerOptions();
+
+                byte[] result = await asset.ExecuteAsync(context.Object, options);
+                string content = Encoding.UTF8.GetString(result);
+
+                Assert.Contains("background-color: red", content);
+                Assert.Contains("background-color: blue", content);
+                Assert.Contains("background-color: green", content);
+            }
+            finally
+            {
+                if (Directory.Exists(root))
+                {
+                    Directory.Delete(root, recursive: true);
+                }
+            }
         }
     }
 }

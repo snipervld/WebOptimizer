@@ -8,6 +8,7 @@ using System.Text;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc.TagHelpers;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.DependencyInjection;
@@ -21,6 +22,11 @@ namespace WebOptimizer
 {
     internal class Asset : IAsset
     {
+        /// <summary>
+        /// Private const extracted from <see cref="GlobbingUrlBuilder"/>.
+        /// Used to join multiple patterns for that class.
+        /// </summary>
+        internal const string PatternSeparator = ",";
         private readonly ILogger<Asset> _logger;
         internal const string PhysicalFilesKey = "PhysicalFiles";
         private readonly object _sync = new();
@@ -50,9 +56,10 @@ namespace WebOptimizer
         public async Task<byte[]> ExecuteAsync(HttpContext context, IWebOptimizerOptions options)
         {
             var env = (IWebHostEnvironment)context.RequestServices.GetService(typeof(IWebHostEnvironment));
+            var cache = (IMemoryCache)context.RequestServices.GetService(typeof(IMemoryCache));
             var config = new AssetContext(context, this, options);
 
-            IEnumerable<string> files = ExpandGlobs(this, env);
+            IEnumerable<string> files = ExpandGlobs(this, env, cache);
 
             DateTime lastModified = DateTime.MinValue;
 
@@ -84,12 +91,17 @@ namespace WebOptimizer
             return config.Content.FirstOrDefault().Value;
         }
 
-        public static IEnumerable<string> ExpandGlobs(IAsset asset, IWebHostEnvironment env)
+        public static IEnumerable<string> ExpandGlobs(IAsset asset, IWebHostEnvironment env, IMemoryCache cache)
         {
             var files = new List<string>();
 
             if (asset.SourceFiles.Any())
             {
+                var excludePattern =
+                    asset.ExcludeFiles.Count == 0
+                        ? null
+                        : string.Join(PatternSeparator, asset.ExcludeFiles);
+
                 foreach (string sourceFile in asset.SourceFiles)
                 {
                     var provider = asset.GetFileProvider(env, sourceFile, out string outSourceFile);
@@ -103,19 +115,13 @@ namespace WebOptimizer
                     }
                     else
                     {
-                        var virtualFilePaths = provider.GetAllFiles("/");
-
-                        var matcher = new Matcher();
-                        matcher.AddInclude(outSourceFile);
-                        matcher.AddExcludePatterns(asset.ExcludeFiles);
-                        PatternMatchingResult globbingResult = matcher.Match(virtualFilePaths);
-
-                        IEnumerable<string> fileMatches = globbingResult.Files.Select(f => f.Path);
+                        var globbingUrlBuilder = new GlobbingUrlBuilder(provider, cache, requestPathBase: /*context.Request.PathBase*/ null);
+                        IEnumerable<string> fileMatches = globbingUrlBuilder.BuildUrlList(staticUrl: null, includePattern: outSourceFile, excludePattern: excludePattern);
 
                         var sourceIsRooted = outSourceFile.StartsWith('/');
-                        if (sourceIsRooted)
+                        if (!sourceIsRooted)
                         {
-                            fileMatches = fileMatches.Select(f => "/" + f);
+                            fileMatches = fileMatches.Select(f => f.TrimStart('/'));
                         }
 
                         if (!fileMatches.Any())
@@ -179,7 +185,7 @@ namespace WebOptimizer
 
             if (!Items.ContainsKey(PhysicalFilesKey))
             {
-                physicalFiles = ExpandGlobs(this, env);
+                physicalFiles = ExpandGlobs(this, env, cache);
             }
             else
             {
