@@ -150,6 +150,8 @@ namespace WebOptimizer.Test
             Assert.Contains("background-color: red", content);
             Assert.Contains("background-color: blue", content);
             Assert.Contains("background-color: green", content);
+
+            Mock.VerifyAll(env, context);
         }
 
         /// <summary>
@@ -198,6 +200,8 @@ namespace WebOptimizer.Test
                 Assert.Contains("background-color: red", content);
                 Assert.Contains("background-color: blue", content);
                 Assert.Contains("background-color: green", content);
+
+                Mock.VerifyAll(context, env);
             }
             finally
             {
@@ -247,6 +251,8 @@ namespace WebOptimizer.Test
             int indexA = content.IndexOf(".a {", StringComparison.Ordinal);
             Assert.True(indexB >= 0 && indexA >= 0, "both files must be bundled");
             Assert.True(indexB < indexA, "b.css must come before a.css, matching SourceFiles order");
+
+            Mock.VerifyAll(env, context);
         }
 
         [Fact2]
@@ -291,6 +297,8 @@ namespace WebOptimizer.Test
             int indexRoot = content.IndexOf(".root {", StringComparison.Ordinal);
             Assert.True(indexNested >= 0 && indexRoot >= 0, "both files must be bundled");
             Assert.True(indexNested < indexRoot, "sub/*.css pattern is listed first, so its file must come first");
+
+            Mock.VerifyAll(env, context);
         }
 
         [Fact2]
@@ -316,6 +324,8 @@ namespace WebOptimizer.Test
             IEnumerable<string> files = Asset.ExpandGlobs(asset, env.Object, cache);
 
             Assert.Equal(new[] { "b.css", "a.css" }, files);
+
+            Mock.VerifyAll(env);
         }
 
         [Fact2]
@@ -344,6 +354,8 @@ namespace WebOptimizer.Test
             IEnumerable<string> files = Asset.ExpandGlobs(asset, env.Object, cache);
 
             Assert.Equal(new[] { "sub/nested.css", "root.css" }, files);
+
+            Mock.VerifyAll(env);
         }
 
         /// <summary>
@@ -393,6 +405,8 @@ namespace WebOptimizer.Test
                 "sub/*.css group precedes style-*.css group");
             Assert.True(indexStyleA < indexAlpha && indexStyleB < indexAlpha,
                 "style-*.css group precedes alpha.css group");
+
+            Mock.VerifyAll(env);
         }
     }
 }
