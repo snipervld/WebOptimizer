@@ -1,17 +1,25 @@
 using System;
-using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Primitives;
-using Moq;
 
 namespace WebOptimizer.Core.Test.Mocks
 {
     // grabbed the logic from https://github.com/dotnet/aspnetcore/blob/main/src/Mvc/Mvc.TagHelpers/test/GlobbingUrlBuilderTest.cs
     // and made it recursive
-    internal static class MockFileProvider
+    internal class MockFileProvider : IFileProvider
     {
+        private readonly MockChangeToken _changeToken = new();
+        private readonly Dictionary<string, MockFileInfo> _files;
+        private readonly Dictionary<string, MockDirectoryContents> _directories;
+
+        private MockFileProvider(Dictionary<string, MockFileInfo> files, Dictionary<string, MockDirectoryContents> directories)
+        {
+            _files = files;
+            _directories = directories;
+        }
+
         public static IFileProvider Create(MockFileInfo rootNode)
         {
             if (rootNode.Files == null || !rootNode.Files.Any())
@@ -19,20 +27,11 @@ namespace WebOptimizer.Core.Test.Mocks
                 throw new ArgumentException($"{nameof(rootNode)} must have children.", nameof(rootNode));
             }
 
-            var fileProvider = new Mock<IFileProvider>(MockBehavior.Strict);
-            fileProvider.Setup(fp => fp.GetFileInfo(It.IsAny<string>()))
-                .Returns((string p) => new NotFoundFileInfo(p));
-            SetupDirectoriesFiles(fileProvider, rootNode);
-            fileProvider.Setup(fp => fp.Watch(It.IsAny<string>()))
-                .Returns(new Mock<IChangeToken>().Object);
+            Dictionary<string, MockFileInfo> files = [];
+            Dictionary<string, MockDirectoryContents> directories = [];
 
-            return fileProvider.Object;
-        }
-
-        private static void SetupDirectoriesFiles(Mock<IFileProvider> fileProviderMock, MockFileInfo directory)
-        {
             var stack = new Stack<(MockFileInfo fileInfo, string directoryPath)>();
-            stack.Push((directory, string.Empty));
+            stack.Push((rootNode, string.Empty));
 
             while (stack.Count > 0)
             {
@@ -42,19 +41,9 @@ namespace WebOptimizer.Core.Test.Mocks
                 {
                     var children = fileInfo.Files;
 
-                    var directoryContents = new Mock<IDirectoryContents>();
-                    directoryContents.Setup(dc => dc.Exists).Returns(true);
-                    directoryContents.Setup(dc => dc.GetEnumerator())
-                        .Returns(() => children.GetEnumerator());
-                    directoryContents
-                        .As<IEnumerable>()
-                        .Setup(dc => dc.GetEnumerator())
-                        .Returns(() => children.GetEnumerator());
-
                     var fullPath = string.IsNullOrEmpty(directoryPath) ? fileInfo.Name : directoryPath + "/" + fileInfo.Name;
 
-                    fileProviderMock.Setup(fp => fp.GetDirectoryContents(fullPath))
-                        .Returns(directoryContents.Object);
+                    directories[fullPath] = new MockDirectoryContents(children);
 
                     foreach (var child in children)
                     {
@@ -64,12 +53,27 @@ namespace WebOptimizer.Core.Test.Mocks
                 else
                 {
                     var fullPath = string.IsNullOrEmpty(directoryPath) ? fileInfo.Name : directoryPath + "/" + fileInfo.Name;
-                    fileProviderMock.Setup(fp => fp.GetFileInfo(fullPath))
-                        .Returns(fileInfo);
-                    fileProviderMock.Setup(fp => fp.GetFileInfo("/" + fullPath))
-                        .Returns(fileInfo);
+                    files[fullPath] = fileInfo;
+                    files["/" + fullPath] = fileInfo;
                 }
             }
+
+            return new MockFileProvider(files, directories);
+        }
+
+        public IFileInfo GetFileInfo(string subpath)
+        {
+            return _files.TryGetValue(subpath, out var fileInfo) ? fileInfo : new NotFoundFileInfo(subpath);
+        }
+
+        public IDirectoryContents GetDirectoryContents(string subpath)
+        {
+           return _directories.TryGetValue(subpath, out var directoryContents) ? directoryContents : new NotFoundDirectoryContents();
+        }
+
+        public IChangeToken Watch(string filter)
+        {
+            return _changeToken;
         }
     }
 }

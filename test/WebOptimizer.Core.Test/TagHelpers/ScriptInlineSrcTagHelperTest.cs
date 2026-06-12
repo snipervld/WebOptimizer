@@ -49,14 +49,8 @@ namespace WebOptimizer.Core.Test.TagHelpers
                 });
 
             var options = new WebOptimizerOptions();
-            var optionsFactory = new Mock<IOptionsFactory<WebOptimizerOptions>>();
-            optionsFactory.Setup(x => x.Create(It.IsAny<string>())).Returns(options);
-
-            var sources = new List<IOptionsChangeTokenSource<WebOptimizerOptions>>();
-            var optionsMonitorCache = new Mock<IOptionsMonitorCache<WebOptimizerOptions>>();
-
-            var optionsMonitor = new Mock<OptionsMonitor<WebOptimizerOptions>>(optionsFactory.Object, sources, optionsMonitorCache.Object);
-            optionsMonitor.Setup(x => x.Get(It.IsAny<string>())).Returns(options);
+            var optionsMonitor = new Mock<IOptionsMonitor<WebOptimizerOptions>>();
+            optionsMonitor.Setup(x => x.CurrentValue).Returns(options);
 
             var route = "/test.js";
             IAsset asset;
@@ -84,6 +78,8 @@ namespace WebOptimizer.Core.Test.TagHelpers
 
             Assert.Equal(TagMode.StartTagAndEndTag, tagHelperOutput.TagMode);
             Assert.Equal(content, tagHelperOutput.Content.GetContent());
+
+            Mock.VerifyAll(env, cache, assetPipeline);
         }
 
         /// <summary>
@@ -117,14 +113,8 @@ namespace WebOptimizer.Core.Test.TagHelpers
                     });
 
                 var options = new WebOptimizerOptions();
-                var optionsFactory = new Mock<IOptionsFactory<WebOptimizerOptions>>();
-                optionsFactory.Setup(x => x.Create(It.IsAny<string>())).Returns(options);
-
-                var sources = new List<IOptionsChangeTokenSource<WebOptimizerOptions>>();
-                var optionsMonitorCache = new Mock<IOptionsMonitorCache<WebOptimizerOptions>>();
-
-                var optionsMonitor = new Mock<OptionsMonitor<WebOptimizerOptions>>(optionsFactory.Object, sources, optionsMonitorCache.Object);
-                optionsMonitor.Setup(x => x.Get(It.IsAny<string>())).Returns(options);
+                var optionsMonitor = new Mock<IOptionsMonitor<WebOptimizerOptions>>();
+                optionsMonitor.Setup(x => x.CurrentValue).Returns(options);
 
                 var route = "/test.js";
                 IAsset asset;
@@ -152,6 +142,8 @@ namespace WebOptimizer.Core.Test.TagHelpers
 
                 Assert.Equal(TagMode.StartTagAndEndTag, tagHelperOutput.TagMode);
                 Assert.Equal(content, tagHelperOutput.Content.GetContent());
+
+                Mock.VerifyAll(cache, assetPipeline, env);
             }
             finally
             {
@@ -181,14 +173,8 @@ namespace WebOptimizer.Core.Test.TagHelpers
             env.Setup(e => e.WebRootFileProvider).Returns(fileProvider);
 
             var options = new WebOptimizerOptions();
-            var optionsFactory = new Mock<IOptionsFactory<WebOptimizerOptions>>();
-            optionsFactory.Setup(x => x.Create(It.IsAny<string>())).Returns(options);
-
-            var sources = new List<IOptionsChangeTokenSource<WebOptimizerOptions>>();
-            var optionsMonitorCache = new Mock<IOptionsMonitorCache<WebOptimizerOptions>>();
-
-            var optionsMonitor = new Mock<OptionsMonitor<WebOptimizerOptions>>(optionsFactory.Object, sources, optionsMonitorCache.Object);
-            optionsMonitor.Setup(x => x.Get(It.IsAny<string>())).Returns(options);
+            var optionsMonitor = new Mock<IOptionsMonitor<WebOptimizerOptions>>();
+            optionsMonitor.Setup(x => x.CurrentValue).Returns(options);
 
             var route = "/missing.js";
             IAsset asset;
@@ -215,6 +201,8 @@ namespace WebOptimizer.Core.Test.TagHelpers
 
             await Assert.ThrowsAsync<FileNotFoundException>(
                 () => scriptTagHelper.ProcessAsync(tagHelperContext.Object, tagHelperOutput));
+
+            Mock.VerifyAll(env, assetPipeline);
         }
     }
 }
