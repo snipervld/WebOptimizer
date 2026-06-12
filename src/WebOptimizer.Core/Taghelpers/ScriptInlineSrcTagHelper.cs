@@ -3,6 +3,7 @@ using System.Threading.Tasks;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Razor.TagHelpers;
 using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Options;
 
 namespace WebOptimizer.Taghelpers
@@ -83,11 +84,12 @@ namespace WebOptimizer.Taghelpers
             }
 
             string cleanRoute = route.TrimStart('~');
-            string file = HostingEnvironment.WebRootFileProvider.GetFileInfo(cleanRoute).PhysicalPath;
+            IFileInfo file = HostingEnvironment.WebRootFileProvider.GetFileInfo(cleanRoute);
 
-            if (File.Exists(file))
+            if (file.Exists)
             {
-                using (StreamReader reader = File.OpenText(file))
+                using (Stream stream = file.CreateReadStream())
+                using (StreamReader reader = new(stream))
                 {
                     content = await reader.ReadToEndAsync();
                     AddToCache(cacheKey, content, HostingEnvironment.WebRootFileProvider, cleanRoute);
