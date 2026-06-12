@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using System.Threading.Tasks;
@@ -205,6 +206,193 @@ namespace WebOptimizer.Test
                     Directory.Delete(root, recursive: true);
                 }
             }
+        }
+
+        [Fact2]
+        public async Task ExecuteAsync_ExplicitSourceFiles_PreservesSourceFilesOrder()
+        {
+            var date = new DateTime(2017, 1, 1);
+            var root = MockFileInfo.CreateDirectory("", date,
+            [
+                new MockFileInfo("a.css", date, Encoding.UTF8.GetBytes(".a { color: red; }")),
+                new MockFileInfo("b.css", date, Encoding.UTF8.GetBytes(".b { color: blue; }")),
+            ]);
+            var fileProvider = MockFileProvider.Create(root);
+
+            var logger = new Mock<ILogger<Asset>>();
+            var asset = new Asset("/all.css", "text/css", ["b.css", "a.css"], logger.Object);
+            asset.Concatenate();
+
+            var env = new Mock<IWebHostEnvironment>();
+            env.Setup(e => e.WebRootFileProvider)
+                .Returns(fileProvider);
+
+            var cache = new MemoryCache(new MemoryCacheOptions());
+
+            var context = new Mock<HttpContext>();
+            context.SetupAllProperties();
+            context.Setup(c => c.RequestServices.GetService(typeof(IWebHostEnvironment)))
+                .Returns(env.Object);
+            context.Setup(c => c.RequestServices.GetService(typeof(IMemoryCache)))
+                .Returns(cache);
+            context.Setup(c => c.Response.Headers)
+                .Returns(new HeaderDictionary());
+
+            var options = new WebOptimizerOptions();
+
+            byte[] result = await asset.ExecuteAsync(context.Object, options);
+            string content = Encoding.UTF8.GetString(result);
+
+            int indexB = content.IndexOf(".b {", StringComparison.Ordinal);
+            int indexA = content.IndexOf(".a {", StringComparison.Ordinal);
+            Assert.True(indexB >= 0 && indexA >= 0, "both files must be bundled");
+            Assert.True(indexB < indexA, "b.css must come before a.css, matching SourceFiles order");
+        }
+
+        [Fact2]
+        public async Task ExecuteAsync_MultipleGlobPatterns_PreservesPatternOrder()
+        {
+            var date = new DateTime(2017, 1, 1);
+            var root = MockFileInfo.CreateDirectory("", date,
+            [
+                new MockFileInfo("root.css", date, Encoding.UTF8.GetBytes(".root { color: red; }")),
+                MockFileInfo.CreateDirectory("sub", date,
+                [
+                    new MockFileInfo("nested.css", date, Encoding.UTF8.GetBytes(".nested { color: blue; }")),
+                ]),
+            ]);
+            var fileProvider = MockFileProvider.Create(root);
+
+            var logger = new Mock<ILogger<Asset>>();
+            var asset = new Asset("/all.css", "text/css", ["sub/*.css", "*.css"], logger.Object);
+            asset.Concatenate();
+
+            var env = new Mock<IWebHostEnvironment>();
+            env.Setup(e => e.WebRootFileProvider)
+                .Returns(fileProvider);
+
+            var cache = new MemoryCache(new MemoryCacheOptions());
+
+            var context = new Mock<HttpContext>();
+            context.SetupAllProperties();
+            context.Setup(c => c.RequestServices.GetService(typeof(IWebHostEnvironment)))
+                .Returns(env.Object);
+            context.Setup(c => c.RequestServices.GetService(typeof(IMemoryCache)))
+                .Returns(cache);
+            context.Setup(c => c.Response.Headers)
+                .Returns(new HeaderDictionary());
+
+            var options = new WebOptimizerOptions();
+
+            byte[] result = await asset.ExecuteAsync(context.Object, options);
+            string content = Encoding.UTF8.GetString(result);
+
+            int indexNested = content.IndexOf(".nested {", StringComparison.Ordinal);
+            int indexRoot = content.IndexOf(".root {", StringComparison.Ordinal);
+            Assert.True(indexNested >= 0 && indexRoot >= 0, "both files must be bundled");
+            Assert.True(indexNested < indexRoot, "sub/*.css pattern is listed first, so its file must come first");
+        }
+
+        [Fact2]
+        public void ExpandGlobs_ExplicitSourceFiles_PreservesSourceFilesOrder()
+        {
+            var date = new DateTime(2017, 1, 1);
+            var root = MockFileInfo.CreateDirectory("", date,
+            [
+                new MockFileInfo("a.css", date, Encoding.UTF8.GetBytes(".a { color: red; }")),
+                new MockFileInfo("b.css", date, Encoding.UTF8.GetBytes(".b { color: blue; }")),
+            ]);
+            var fileProvider = MockFileProvider.Create(root);
+
+            var logger = new Mock<ILogger<Asset>>();
+            var asset = new Asset("/all.css", "text/css", ["b.css", "a.css"], logger.Object);
+
+            var env = new Mock<IWebHostEnvironment>();
+            env.Setup(e => e.WebRootFileProvider)
+                .Returns(fileProvider);
+
+            var cache = new MemoryCache(new MemoryCacheOptions());
+
+            IEnumerable<string> files = Asset.ExpandGlobs(asset, env.Object, cache);
+
+            Assert.Equal(new[] { "b.css", "a.css" }, files);
+        }
+
+        [Fact2]
+        public void ExpandGlobs_MultipleGlobPatterns_PreservesPatternOrder()
+        {
+            var date = new DateTime(2017, 1, 1);
+            var root = MockFileInfo.CreateDirectory("", date,
+            [
+                new MockFileInfo("root.css", date, Encoding.UTF8.GetBytes(".root { color: red; }")),
+                MockFileInfo.CreateDirectory("sub", date,
+                [
+                    new MockFileInfo("nested.css", date, Encoding.UTF8.GetBytes(".nested { color: blue; }")),
+                ]),
+            ]);
+            var fileProvider = MockFileProvider.Create(root);
+
+            var logger = new Mock<ILogger<Asset>>();
+            var asset = new Asset("/all.css", "text/css", ["sub/*.css", "*.css"], logger.Object);
+
+            var env = new Mock<IWebHostEnvironment>();
+            env.Setup(e => e.WebRootFileProvider)
+                .Returns(fileProvider);
+
+            var cache = new MemoryCache(new MemoryCacheOptions());
+
+            IEnumerable<string> files = Asset.ExpandGlobs(asset, env.Object, cache);
+
+            Assert.Equal(new[] { "sub/nested.css", "root.css" }, files);
+        }
+
+        /// <summary>
+        /// <see cref="Asset.ExpandGlobs"/> maps every <see cref="IAsset.SourceFiles"/> entry to a group of
+        /// matched files and keeps those groups in entry order. The order *within* a glob group is an
+        /// implementation detail and is not asserted.
+        /// </summary>
+        [Fact2]
+        public void ExpandGlobs_MixedExplicitAndGlobPatterns_KeepsEntryGroupOrder()
+        {
+            var date = new DateTime(2017, 1, 1);
+            var root = MockFileInfo.CreateDirectory("", date,
+            [
+                new MockFileInfo("alpha.css", date, Encoding.UTF8.GetBytes(".alpha { color: red; }")),
+                new MockFileInfo("zeta.css", date, Encoding.UTF8.GetBytes(".zeta { color: blue; }")),
+                new MockFileInfo("style-a.css", date, Encoding.UTF8.GetBytes(".style-a { color: #FF0000; }")),
+                new MockFileInfo("style-b.css", date, Encoding.UTF8.GetBytes(".style-b { color: #00FF00; }")),
+                MockFileInfo.CreateDirectory("sub", date,
+                [
+                    new MockFileInfo("inner.css", date, Encoding.UTF8.GetBytes(".inner { color: green; }")),
+                ]),
+            ]);
+            var fileProvider = MockFileProvider.Create(root);
+
+            var logger = new Mock<ILogger<Asset>>();
+            var asset = new Asset("/all.css", "text/css", ["zeta.css", "sub/*.css", "style-*.css", "alpha.css"], logger.Object);
+
+            var env = new Mock<IWebHostEnvironment>();
+            env.Setup(e => e.WebRootFileProvider)
+                .Returns(fileProvider);
+
+            var cache = new MemoryCache(new MemoryCacheOptions());
+
+            List<string> files = [.. Asset.ExpandGlobs(asset, env.Object, cache)];
+            // zeta.css, sub/inner.css, (style-a.css, style-b.css - any order), alpha.css
+
+            Assert.Equal(5, files.Count);
+
+            int indexZeta = files.IndexOf("zeta.css");
+            int indexInner = files.IndexOf("sub/inner.css");
+            int indexStyleA = files.IndexOf("style-a.css");
+            int indexStyleB = files.IndexOf("style-b.css");
+            int indexAlpha = files.IndexOf("alpha.css");
+
+            Assert.True(indexZeta < indexInner, "zeta.css group precedes sub/*.css group");
+            Assert.True(indexInner < indexStyleA && indexInner < indexStyleB,
+                "sub/*.css group precedes style-*.css group");
+            Assert.True(indexStyleA < indexAlpha && indexStyleB < indexAlpha,
+                "style-*.css group precedes alpha.css group");
         }
     }
 }
